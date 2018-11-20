@@ -3,31 +3,130 @@ title: "plate_reader"
 author: "Nick Waters"
 date: "26/10/2018"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(dplyr)
-setwd("~/GitHub/hh_plate/")
+library(tidyr)
+# set your working directory to wherever you cloned/downloaded this
+# setwd("~/GitHub/hh_plate/")
 ```
 
-First, we read in our (cleaned) data
+# The data
+We got the two data from a collaborator, and put them in the *rawdata* directory.  From there, we opened the files, and because it was a single sheet, we exported them as csv files. 
+
+We will never, ever touch the raw data from here on out, just our csv version. This way, the integrity of our analysis is protected by ensuring we are no longer saving anything to our raw data.
+
+When looking at the columns, however, we need to fix something. See how the columns look like this?
 ```{r}
-dat <- read.csv("./data/Growth_curve_37C.csv")
+# Strain A(1),Strain A(1),Strain A(1),Strain A(2),Strain A(2),Strain A(2)
+```
+But the Strain D ones looks like this:
+
+```{r}
+#Strain D(1),Strain D(1),Strain D(1),Strain D (2),Strain D (2),Strain D (2)
+```
+
+See that extra space in there?  Thats trouble.  Lets delete that from the .csv files.  Never change the raw data, but we can change our csv copy of this data. Open up the file, delete the extra spaces, and save the .csv file.
+
+While we're at it, lets fix the rest.  Lets get rid of the spaces, the parentheses.
+```{r}
+# Strain_A_1,Strain_A_1,Strain_A_1,Strain_A_2,Strain_A_2,Strain_A_2,Strain_A_3,Strain_A_3, etc
+```
+
+Nice, clean data.  Even though there are non-unique columns, these will be cleaned up nicely by adding .1 .2 .3 to the end.
+
+
+# Inputting the data
+Lets read in the first of our (cleaned) data:
+```{r}
+dat <- read.csv("./data/Growth_curve_37C.csv", stringsAsFactors = F)
 str(dat)
 ```
-Our first column appears to be our time. Lets rename it:
+The first step is to remove the data from the bottom of the sheet, where it talks about the type of run, the program, etc.  This block of output appears to start with a "Date of measurement:" line. this next snippet of code identifies the line number for the row containing that, and 
 
 ```{r}
-dat$time <- dat$X
-dat$time <- gsub(" s", "", dat$time)
-dat$time <- dat$time)
+(start_of_run_data <- grep("Date of measurement", dat$X))
+```
+And then split the data into the run info and our actual plate data
 
+```{r}
+# all the rows after
+run_info_data <-  dat[start_of_run_data:nrow(dat), 1]
+# all the rows before
+plate_data <- dat[1:(start_of_run_data - 1), ]
 ```
 
+Our first column appears to be our time, and then columns are each of the 96 wells. Lets make a new column for "time" from the old column "X", and convert it to numbers (it is currently not treated as a number, cause it has the "s" for seconds after it.:
 
+```{r}
+plate_data$time <- plate_data$X
+```
+First, we remove the " s" and then we convert it to numeric type.  If we get any errors here, we need to see why caused the conversion to fail.
 
+```{r}
+plate_data$time <- gsub(" s", "", plate_data$time)
+plate_data$time <- as.numeric(plate_data$time)
+```
+<!-- And lastly, we because these are unique, lets make the official row names for this data frame the time, and get rid of both the "time" and "X" columns: -->
+```{r}
+rownames(plate_data) <- plate_data$time
+plate_data$time <- NULL
+plate_data$X <- NULL
+```
 
+Now, lets look at the column names:
+```{r}
+(colnames(plate_data))
+```
+R can't handle non-unique columns, so it added the .1, .2, etc to the end. If you look back at the raw data, it put those in cause we had some non unique columns, and some parenthes. For the empty columns, it gave column names starting with "X.##".  We can start off by removing all those columns, using dplyr.
+
+```{r}
+# layout of whole plate
+plate_layout = data.frame(expand.grid(1:3, c("strain", "strain", "strain", "blank"), LETTERS[1:8]))
+# combine into list of names
+full_names <- paste(plate_layout[, "Var3"], plate_layout[, "Var2"], plate_layout[, "Var1"], sep="_")
+# remove the last 3 at the end
+full_names[length(full_names)-3:colnames(full_names)]
+plate_data <- plate_data %>% select(-starts_with("X."))
+(colnames(plate_data))
+```
+Nice, no more weird empty columns.  But we still have to deal with the weird names.
+```{r}
+n <- data.frame(raw = colnames(plate_data))
+n$type <- ifelse(grepl("Strain", n$raw), "sample", "blank")
+n$strain <- gsub("Strain\\.(.)\\.(.).*", "\\2", n$raw)
+n$rep <- gsub("(Strain\\..)\\.(.).*", "\\2", n$raw)
+```
+
+# Tidy plate reader data?
+So to have try tidy data, we are going to want to change the data slightly.  First, lets transpose it so that we have columns of time, and then we need to make it have one observation per row.
+
+```{r}
+tall_data <- gather(plate_data, key=c(strain, time), "value", -time)
+```
+
+Great now we have a row for each timepoint and strain, this will make our lives easier on the next section.
+
+# Dealing with all these strain names
+LEts look at the column names again
+```{r}
+colnames(tall_data)[2] <- "strain_raw"
+tall_data %>%
+  separate(head(tall_data), strain, sep = "\\.") %>%
+  head()
+  
+
+tall_data$strain <- gsub("Strain")
+```
+We have 93, but if we look at the previous columns, the occur in groups of 12.  More secifically, they appear to be 9 strains (A-H), and then 3 sets of replicates, followed by 3 blank columns.  We could give these better names with R.
+```{r}
+colnames(plate_data)
+
+```
 
 
 
